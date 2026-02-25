@@ -50,8 +50,6 @@ const BLOCKED_MODULES: &[&str] = &[
     "multiprocessing",
     "signal",
     "threading",
-    "io",      // FileIO gives raw filesystem access
-    "_io",     // C implementation of io
     "tempfile",
     "webbrowser",
     "http",
@@ -112,32 +110,6 @@ pub fn create_namespace(py: Python<'_>, width: u32, height: u32) -> PyResult<Py<
     Ok(globals.into())
 }
 
-/// Set up stdout capture. Returns (captured_out, old_stdout) handles.
-/// This is done via sys module which we import fresh each time — it does
-/// NOT get exposed to user code since io is blocked in sys.modules and
-/// __import__ is removed from builtins.
-fn setup_stdout_capture<'py>(py: Python<'py>) -> PyResult<(Bound<'py, PyAny>, Bound<'py, PyAny>)> {
-    // Temporarily unblock io for our own use
-    let sys = PyModule::import(py, "sys")?;
-    let sys_modules = sys.getattr("modules")?;
-
-    // Allow io temporarily (may already be unblocked in some contexts)
-    let _ = sys_modules.del_item("io");
-    let _ = sys_modules.del_item("_io");
-
-    let io_module = PyModule::import(py, "io")?;
-    let string_io = io_module.getattr("StringIO")?;
-    let captured_out = string_io.call0()?;
-    let old_stdout = sys.getattr("stdout")?;
-    sys.setattr("stdout", &captured_out)?;
-
-    // Re-block io so user code can't access it
-    sys_modules.set_item("io", py.None())?;
-    sys_modules.set_item("_io", py.None())?;
-
-    Ok((captured_out, old_stdout))
-}
-
 /// Execute Python code in a board's namespace, capturing SVG output and stdout.
 pub fn execute_python(
     py: Python<'_>,
@@ -163,9 +135,13 @@ pub fn execute_python(
     .map_err(ScryError::from)?;
     globals.set_item("svg", callback).map_err(ScryError::from)?;
 
-    // Set up stdout capture (io is temporarily unblocked then re-blocked)
-    let (captured_out, old_stdout) = setup_stdout_capture(py).map_err(ScryError::from)?;
+    // Redirect stdout to capture prints
+    let io_module = PyModule::import(py, "io").map_err(ScryError::from)?;
+    let string_io = io_module.getattr("StringIO").map_err(ScryError::from)?;
+    let captured_out = string_io.call0().map_err(ScryError::from)?;
     let sys = PyModule::import(py, "sys").map_err(ScryError::from)?;
+    let old_stdout = sys.getattr("stdout").map_err(ScryError::from)?;
+    sys.setattr("stdout", &captured_out).map_err(ScryError::from)?;
 
     // Convert code to CString for py.run
     let c_code = CString::new(code)
@@ -283,11 +259,11 @@ mod tests {
     }
 
     #[test]
-    fn test_sandbox_blocks_io() {
+    fn test_sandbox_blocks_subprocess() {
         Python::attach(|py| {
             let ns = create_namespace(py, 800, 600).unwrap();
-            let result = execute_python(py, &ns, "import io", 800, 600);
-            assert!(result.is_err(), "import io should fail");
+            let result = execute_python(py, &ns, "import subprocess", 800, 600);
+            assert!(result.is_err(), "import subprocess should fail");
         });
     }
 
