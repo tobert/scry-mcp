@@ -215,35 +215,40 @@ impl ScryServer {
         description = "List all active boards with their thumbnails, URLs, and metadata."
     )]
     async fn whiteboard_list(&self) -> Result<CallToolResult, rmcp::ErrorData> {
-        let boards = self.state.boards.read().await;
-
-        if boards.is_empty() {
-            return Ok(CallToolResult::success(vec![Content::text(
-                "No boards yet. Use the whiteboard tool to create one.",
-            )]));
-        }
+        // Collect data under read lock, release before base64 encoding
+        let board_data: Vec<(String, String, u32, u32, String, String, usize, Vec<u8>)> = {
+            let boards = self.state.boards.read().await;
+            if boards.is_empty() {
+                return Ok(CallToolResult::success(vec![Content::text(
+                    "No boards yet. Use the whiteboard tool to create one.",
+                )]));
+            }
+            let mut list: Vec<_> = boards.values().collect();
+            list.sort_by_key(|b| b.created_at);
+            list.into_iter()
+                .map(|b| {
+                    (
+                        b.name.clone(),
+                        self.state.board_url(&b.name),
+                        b.width,
+                        b.height,
+                        b.created_at.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+                        b.updated_at.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+                        b.history.len(),
+                        b.png.clone(),
+                    )
+                })
+                .collect()
+        }; // read lock released
 
         let mut content = Vec::new();
-        let mut board_list: Vec<_> = boards.values().collect();
-        board_list.sort_by_key(|b| b.created_at);
-
-        for board in board_list {
-            let url = self.state.board_url(&board.name);
+        for (name, url, w, h, created, updated, hist_len, png) in board_data {
             let info = format!(
-                "Board: {}\nURL: {}\nSize: {}x{}\nCreated: {}\nUpdated: {}\nHistory: {} snapshots",
-                board.name,
-                url,
-                board.width,
-                board.height,
-                board.created_at.format("%Y-%m-%d %H:%M:%S UTC"),
-                board.updated_at.format("%Y-%m-%d %H:%M:%S UTC"),
-                board.history.len(),
+                "Board: {name}\nURL: {url}\nSize: {w}x{h}\nCreated: {created}\nUpdated: {updated}\nHistory: {hist_len} snapshots",
             );
             content.push(Content::text(info));
-
-            if !board.png.is_empty() {
-                let png_base64 = BASE64.encode(&board.png);
-                content.push(Content::image(png_base64, "image/png"));
+            if !png.is_empty() {
+                content.push(Content::image(BASE64.encode(&png), "image/png"));
             }
         }
 

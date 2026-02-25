@@ -6,7 +6,7 @@ use axum::routing::get;
 use axum::Router;
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
-use futures::stream::Stream;
+use futures_core::Stream;
 use std::convert::Infallible;
 use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
