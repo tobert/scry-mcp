@@ -2,6 +2,7 @@
 name = "scry-mcp"
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
 
 [dependencies]
 rmcp = { version = "0.16", features = ["server", "macros", "transport-io", "schemars"] }
