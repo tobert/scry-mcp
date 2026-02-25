@@ -14,6 +14,14 @@ Computational scrying glass — an MCP server that lets Claude generate SVG visu
 
 **`whiteboard_list`** — List all active boards with thumbnails, URLs, and metadata.
 
+## Requirements
+
+- **Rust** 1.85+ (edition 2024)
+- **Python 3.x** with development headers (PyO3 embeds CPython at build time)
+- **System fonts** — resvg uses fontdb to load system fonts for text rendering
+
+Built and tested on **Arch Linux** (kernel 6.18, Python 3.14, Rust 1.90). Should work on other Linux distros and macOS but hasn't been tested yet — reports welcome.
+
 ## Install
 
 ```
@@ -26,6 +34,12 @@ Or build from source:
 git clone https://github.com/tobert/scry-mcp
 cd scry-mcp
 cargo build --release
+```
+
+On Debian/Ubuntu you may need `python3-dev` for PyO3:
+
+```
+sudo apt install python3-dev
 ```
 
 ### Add to Claude Code
