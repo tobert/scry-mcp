@@ -121,9 +121,9 @@ fn setup_stdout_capture<'py>(py: Python<'py>) -> PyResult<(Bound<'py, PyAny>, Bo
     let sys = PyModule::import(py, "sys")?;
     let sys_modules = sys.getattr("modules")?;
 
-    // Save the blocked state, allow io temporarily
-    sys_modules.del_item("io")?;
-    sys_modules.del_item("_io")?;
+    // Allow io temporarily (may already be unblocked in some contexts)
+    let _ = sys_modules.del_item("io");
+    let _ = sys_modules.del_item("_io");
 
     let io_module = PyModule::import(py, "io")?;
     let string_io = io_module.getattr("StringIO")?;

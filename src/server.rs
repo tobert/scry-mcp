@@ -55,18 +55,34 @@ impl ScryServer {
         let w = params.width.unwrap_or(800);
         let h = params.height.unwrap_or(600);
 
-        // Get or create namespace
-        let namespace = {
-            let boards = self.state.boards.read().await;
-            boards.get(&name).map(|b| b.namespace.clone())
-        };
-
-        let namespace = match namespace {
-            Some(ns) => ns,
-            None => {
-                python::create_namespace_async(w, h)
+        // Get or create namespace atomically under write lock to prevent
+        // TOCTOU race where two concurrent requests for a new board both
+        // create independent namespaces.
+        let (namespace, is_new_board) = {
+            let mut boards = self.state.boards.write().await;
+            if let Some(board) = boards.get(&name) {
+                (board.namespace.clone(), false)
+            } else {
+                // Create namespace and placeholder board under the lock
+                let ns = python::create_namespace_async(w, h)
                     .await
-                    .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?
+                    .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
+                let now = Utc::now();
+                boards.insert(
+                    name.clone(),
+                    Board {
+                        name: name.clone(),
+                        width: w,
+                        height: h,
+                        svg: String::new(),
+                        png: Vec::new(),
+                        namespace: ns.clone(),
+                        created_at: now,
+                        updated_at: now,
+                        history: Vec::new(),
+                    },
+                );
+                (ns, true)
             }
         };
 
@@ -89,27 +105,11 @@ impl ScryServer {
                     msg.push_str("\n--- stdout ---\n");
                     msg.push_str(&result.stdout);
                 }
-                // Still save the namespace for stateful work
+                // Save updated namespace back to board
                 let mut boards = self.state.boards.write().await;
-                let now = Utc::now();
                 if let Some(board) = boards.get_mut(&name) {
                     board.namespace = namespace;
-                    board.updated_at = now;
-                } else {
-                    boards.insert(
-                        name.clone(),
-                        Board {
-                            name: name.clone(),
-                            width: w,
-                            height: h,
-                            svg: String::new(),
-                            png: Vec::new(),
-                            namespace,
-                            created_at: now,
-                            updated_at: now,
-                            history: Vec::new(),
-                        },
-                    );
+                    board.updated_at = Utc::now();
                 }
                 return Ok(CallToolResult::success(vec![Content::text(msg)]));
             }
@@ -128,13 +128,11 @@ impl ScryServer {
 
         let png_base64 = BASE64.encode(&png_bytes);
 
-        // Store in board
+        // Store results in board (board always exists — created in get-or-create above)
         let now = Utc::now();
-        let is_new;
         {
             let mut boards = self.state.boards.write().await;
             if let Some(board) = boards.get_mut(&name) {
-                // Save current state to history before overwriting
                 if !board.svg.is_empty() {
                     board.history.push(Snapshot {
                         svg: board.svg.clone(),
@@ -148,28 +146,11 @@ impl ScryServer {
                 board.width = w;
                 board.height = h;
                 board.updated_at = now;
-                is_new = false;
-            } else {
-                boards.insert(
-                    name.clone(),
-                    Board {
-                        name: name.clone(),
-                        width: w,
-                        height: h,
-                        svg: svg_content.clone(),
-                        png: png_bytes,
-                        namespace,
-                        created_at: now,
-                        updated_at: now,
-                        history: Vec::new(),
-                    },
-                );
-                is_new = true;
             }
         }
 
         // Broadcast event
-        let event_type = if is_new {
+        let event_type = if is_new_board {
             BoardEventType::Created
         } else {
             BoardEventType::Updated
