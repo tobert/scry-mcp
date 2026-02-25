@@ -1,4 +1,4 @@
-use crate::board::{Board, BoardEvent, BoardEventType, SharedState, Snapshot, validate_board_name};
+use crate::board::{Board, BoardEvent, BoardEventType, SharedState, Snapshot, sanitize_filename, validate_board_name};
 use pyo3::Python;
 use crate::python;
 use crate::render;
@@ -47,6 +47,7 @@ impl ScryServer {
         name = "whiteboard",
         description = "Execute Python code to generate SVG visuals on a named board. Call svg('<svg>...</svg>') in your code to set the board's SVG content, which gets rendered to PNG automatically. Variables persist between calls to the same board. Returns the rendered PNG image and a gallery URL."
     )]
+    // NOTE: tool description above is static; actual response adapts based on --port/--output-dir
     async fn whiteboard(
         &self,
         Parameters(params): Parameters<WhiteboardParams>,
@@ -156,6 +157,13 @@ impl ScryServer {
 
         let png_base64 = BASE64.encode(&png_bytes);
 
+        // Clone bytes for file output before the board lock takes ownership
+        let png_for_file = if self.state.output_dir.is_some() {
+            Some(png_bytes.clone())
+        } else {
+            None
+        };
+
         // Store results in board (board always exists — created in get-or-create above)
         let now = Utc::now();
         {
@@ -192,8 +200,24 @@ impl ScryServer {
             event_type,
         });
 
+        // Write files to output_dir if configured (best-effort)
+        let mut png_path = None;
+        let mut svg_path = None;
+        if let Some(ref dir) = self.state.output_dir {
+            let safe_name = sanitize_filename(&name);
+            let png_file = dir.join(format!("{safe_name}.png"));
+            let svg_file = dir.join(format!("{safe_name}.svg"));
+            match std::fs::write(&png_file, png_for_file.as_ref().unwrap()) {
+                Ok(()) => png_path = Some(png_file),
+                Err(e) => tracing::warn!("Failed to write {}: {e}", png_file.display()),
+            }
+            match std::fs::write(&svg_file, &svg_content) {
+                Ok(()) => svg_path = Some(svg_file),
+                Err(e) => tracing::warn!("Failed to write {}: {e}", svg_file.display()),
+            }
+        }
+
         // Build response
-        let url = self.state.board_url(&name);
         let svg_snippet = if svg_content.len() > 200 {
             let mut end = 200;
             while end > 0 && !svg_content.is_char_boundary(end) {
@@ -204,7 +228,18 @@ impl ScryServer {
             svg_content
         };
 
-        let mut text_parts = vec![format!("Board: {name}\nURL: {url}\nSize: {w}x{h}")];
+        let mut header = format!("Board: {name}\nSize: {w}x{h}");
+        if let Some(url) = self.state.board_url(&name) {
+            header.push_str(&format!("\nURL: {url}"));
+        }
+        if let Some(ref p) = png_path {
+            header.push_str(&format!("\nPNG: {}", p.display()));
+        }
+        if let Some(ref p) = svg_path {
+            header.push_str(&format!("\nSVG: {}", p.display()));
+        }
+
+        let mut text_parts = vec![header];
         if !result.stdout.is_empty() {
             text_parts.push(format!("--- stdout ---\n{}", result.stdout));
         }
@@ -224,7 +259,7 @@ impl ScryServer {
         // Collect data under read lock, release before base64 encoding
         struct BoardSummary {
             name: String,
-            url: String,
+            url: Option<String>,
             width: u32,
             height: u32,
             created: String,
@@ -258,10 +293,13 @@ impl ScryServer {
 
         let mut content = Vec::new();
         for b in board_data {
-            let info = format!(
-                "Board: {}\nURL: {}\nSize: {}x{}\nCreated: {}\nUpdated: {}\nHistory: {} snapshots",
-                b.name, b.url, b.width, b.height, b.created, b.updated, b.history_len,
+            let mut info = format!(
+                "Board: {}\nSize: {}x{}\nCreated: {}\nUpdated: {}\nHistory: {} snapshots",
+                b.name, b.width, b.height, b.created, b.updated, b.history_len,
             );
+            if let Some(ref url) = b.url {
+                info.push_str(&format!("\nURL: {url}"));
+            }
             content.push(Content::text(info));
             if !b.png.is_empty() {
                 content.push(Content::image(BASE64.encode(&b.png), "image/png"));
@@ -291,7 +329,7 @@ impl ServerHandler for ScryServer {
             instructions: Some(
                 "Scry: computational scrying glass. Use 'whiteboard' to execute Python code \
                  that generates SVG visuals. Call svg('<svg>...</svg>') in your code to render. \
-                 Variables persist per board. A live gallery is available in the browser."
+                 Variables persist per board."
                     .into(),
             ),
         }

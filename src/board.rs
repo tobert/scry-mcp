@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use pyo3::Py;
 use pyo3::types::PyDict;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{RwLock, broadcast};
 
@@ -40,8 +41,8 @@ pub enum BoardEventType {
 pub struct AppState {
     pub boards: RwLock<HashMap<String, Board>>,
     pub event_tx: broadcast::Sender<BoardEvent>,
-    pub address: String,
-    pub port: u16,
+    pub gallery_addr: Option<(String, u16)>,
+    pub output_dir: Option<PathBuf>,
 }
 
 pub type SharedState = Arc<AppState>;
@@ -92,24 +93,36 @@ pub fn url_encode(s: &str) -> String {
     out
 }
 
+/// Convert a board name to a filesystem-safe filename.
+/// Keeps `[A-Za-z0-9._-]`, replaces everything else with `_`.
+pub fn sanitize_filename(name: &str) -> String {
+    name.chars()
+        .map(|c| match c {
+            'A'..='Z' | 'a'..='z' | '0'..='9' | '.' | '_' | '-' => c,
+            _ => '_',
+        })
+        .collect()
+}
+
 impl AppState {
-    pub fn new(address: String, port: u16) -> SharedState {
+    pub fn new(gallery_addr: Option<(String, u16)>, output_dir: Option<PathBuf>) -> SharedState {
         let (event_tx, _) = broadcast::channel(64);
         Arc::new(AppState {
             boards: RwLock::new(HashMap::new()),
             event_tx,
-            address,
-            port,
+            gallery_addr,
+            output_dir,
         })
     }
 
-    pub fn board_url(&self, name: &str) -> String {
-        format!(
+    pub fn board_url(&self, name: &str) -> Option<String> {
+        let (ref addr, port) = *self.gallery_addr.as_ref()?;
+        Some(format!(
             "http://{}:{}/gallery/board/{}",
-            self.address,
-            self.port,
+            addr,
+            port,
             url_encode(name)
-        )
+        ))
     }
 }
 
@@ -139,5 +152,14 @@ mod tests {
         assert_eq!(url_encode("hello"), "hello");
         assert_eq!(url_encode("hello world"), "hello%20world");
         assert_eq!(url_encode("a/b"), "a%2Fb");
+    }
+
+    #[test]
+    fn test_sanitize_filename() {
+        assert_eq!(sanitize_filename("hello"), "hello");
+        assert_eq!(sanitize_filename("my-board_1.0"), "my-board_1.0");
+        assert_eq!(sanitize_filename("foo bar"), "foo_bar");
+        assert_eq!(sanitize_filename("café"), "caf_");
+        assert_eq!(sanitize_filename("a@b#c!d"), "a_b_c_d");
     }
 }
