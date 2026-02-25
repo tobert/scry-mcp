@@ -1,4 +1,5 @@
 use crate::board::{Board, BoardEvent, BoardEventType, SharedState, Snapshot, validate_board_name};
+use pyo3::Python;
 use crate::python;
 use crate::render;
 use base64::Engine;
@@ -80,15 +81,20 @@ impl ScryServer {
         // Get or create namespace atomically under write lock to prevent
         // TOCTOU race where two concurrent requests for a new board both
         // create independent namespaces.
+        //
+        // Py<PyDict>::clone requires the thread to be attached to the Python
+        // interpreter, so we must do it inside Python::attach.
         let (namespace, is_new_board) = {
             let mut boards = self.state.boards.write().await;
-            if let Some(board) = boards.get(&name) {
-                (board.namespace.clone(), false)
+            if boards.contains_key(&name) {
+                let ns = Python::attach(|py| boards.get(&name).unwrap().namespace.clone_ref(py));
+                (ns, false)
             } else {
                 // Create namespace and placeholder board under the lock
                 let ns = python::create_namespace_async(w, h)
                     .await
                     .map_err(|e| rmcp::ErrorData::internal_error(e.to_string(), None))?;
+                let ns_copy = Python::attach(|py| ns.clone_ref(py));
                 let now = Utc::now();
                 boards.insert(
                     name.clone(),
@@ -98,13 +104,13 @@ impl ScryServer {
                         height: h,
                         svg: String::new(),
                         png: Vec::new(),
-                        namespace: ns.clone(),
+                        namespace: ns,
                         created_at: now,
                         updated_at: now,
                         history: Vec::new(),
                     },
                 );
-                (ns, true)
+                (ns_copy, true)
             }
         };
 
