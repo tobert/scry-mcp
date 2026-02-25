@@ -17,13 +17,27 @@ Computational scrying glass — an MCP server that lets Claude generate SVG visu
 ## Install
 
 ```
+cargo install scry-mcp
+```
+
+Or build from source:
+
+```
+git clone https://github.com/tobert/scry-mcp
+cd scry-mcp
 cargo build --release
 ```
 
 ### Add to Claude Code
 
 ```
-claude mcp add -s user scry -- /home/atobey/src/aimboard/scry-mcp/target/release/scry-mcp --address 127.0.0.1 --port 3333
+claude mcp add -s user scry -- /path/to/scry-mcp --address 127.0.0.1 --port 3333
+```
+
+Or if installed via `cargo install`:
+
+```
+claude mcp add -s user scry -- scry-mcp --address 127.0.0.1 --port 3333
 ```
 
 Or manually add to your MCP config:
@@ -32,7 +46,7 @@ Or manually add to your MCP config:
 {
   "mcpServers": {
     "scry": {
-      "command": "/home/atobey/src/aimboard/scry-mcp/target/release/scry-mcp",
+      "command": "scry-mcp",
       "args": ["--address", "127.0.0.1", "--port", "3333"]
     }
   }
