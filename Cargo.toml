@@ -2,8 +2,11 @@
 name = "scry-mcp"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.85"
 license = "MIT"
+authors = ["Amy Tobey <tobert@gmail.com>"]
 description = "Computational scrying glass — MCP server for visual computing with embedded Python, SVG rendering, and live web gallery"
+homepage = "https://github.com/tobert/scry-mcp"
 repository = "https://github.com/tobert/scry-mcp"
 readme = "README.md"
 keywords = ["mcp", "svg", "python", "visualization"]
