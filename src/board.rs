@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::{RwLock, broadcast};
 
 #[derive(Clone, Debug)]
+#[allow(dead_code)] // fields stored for future history/undo support
 pub struct Snapshot {
     pub svg: String,
     pub png: Vec<u8>,

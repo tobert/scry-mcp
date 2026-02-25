@@ -222,7 +222,18 @@ impl ScryServer {
     )]
     async fn whiteboard_list(&self) -> Result<CallToolResult, rmcp::ErrorData> {
         // Collect data under read lock, release before base64 encoding
-        let board_data: Vec<(String, String, u32, u32, String, String, usize, Vec<u8>)> = {
+        struct BoardSummary {
+            name: String,
+            url: String,
+            width: u32,
+            height: u32,
+            created: String,
+            updated: String,
+            history_len: usize,
+            png: Vec<u8>,
+        }
+
+        let board_data: Vec<BoardSummary> = {
             let boards = self.state.boards.read().await;
             if boards.is_empty() {
                 return Ok(CallToolResult::success(vec![Content::text(
@@ -232,29 +243,28 @@ impl ScryServer {
             let mut list: Vec<_> = boards.values().collect();
             list.sort_by_key(|b| b.created_at);
             list.into_iter()
-                .map(|b| {
-                    (
-                        b.name.clone(),
-                        self.state.board_url(&b.name),
-                        b.width,
-                        b.height,
-                        b.created_at.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-                        b.updated_at.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-                        b.history.len(),
-                        b.png.clone(),
-                    )
+                .map(|b| BoardSummary {
+                    name: b.name.clone(),
+                    url: self.state.board_url(&b.name),
+                    width: b.width,
+                    height: b.height,
+                    created: b.created_at.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+                    updated: b.updated_at.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+                    history_len: b.history.len(),
+                    png: b.png.clone(),
                 })
                 .collect()
         }; // read lock released
 
         let mut content = Vec::new();
-        for (name, url, w, h, created, updated, hist_len, png) in board_data {
+        for b in board_data {
             let info = format!(
-                "Board: {name}\nURL: {url}\nSize: {w}x{h}\nCreated: {created}\nUpdated: {updated}\nHistory: {hist_len} snapshots",
+                "Board: {}\nURL: {}\nSize: {}x{}\nCreated: {}\nUpdated: {}\nHistory: {} snapshots",
+                b.name, b.url, b.width, b.height, b.created, b.updated, b.history_len,
             );
             content.push(Content::text(info));
-            if !png.is_empty() {
-                content.push(Content::image(BASE64.encode(&png), "image/png"));
+            if !b.png.is_empty() {
+                content.push(Content::image(BASE64.encode(&b.png), "image/png"));
             }
         }
 

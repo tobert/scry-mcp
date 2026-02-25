@@ -14,8 +14,10 @@ static FONTDB: LazyLock<Arc<fontdb::Database>> = LazyLock::new(|| {
 const MAX_DIMENSION: u32 = 8192;
 
 pub fn svg_to_png(svg_str: &str) -> Result<Vec<u8>, ScryError> {
-    let mut options = usvg::Options::default();
-    options.fontdb = FONTDB.clone();
+    let options = usvg::Options {
+        fontdb: FONTDB.clone(),
+        ..Default::default()
+    };
     let tree = usvg::Tree::from_str(svg_str, &options)?;
     let size = tree.size().to_int_size();
 
