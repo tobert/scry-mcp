@@ -10,13 +10,28 @@ static FONTDB: LazyLock<Arc<fontdb::Database>> = LazyLock::new(|| {
     Arc::new(db)
 });
 
+/// Maximum dimension (width or height) for rendered output in pixels.
+const MAX_DIMENSION: u32 = 8192;
+
 pub fn svg_to_png(svg_str: &str) -> Result<Vec<u8>, ScryError> {
     let mut options = usvg::Options::default();
     options.fontdb = FONTDB.clone();
     let tree = usvg::Tree::from_str(svg_str, &options)?;
     let size = tree.size().to_int_size();
+
+    if size.width() == 0 || size.height() == 0 {
+        return Err(ScryError::Render("SVG has zero dimensions".into()));
+    }
+    if size.width() > MAX_DIMENSION || size.height() > MAX_DIMENSION {
+        return Err(ScryError::Render(format!(
+            "SVG dimensions {}x{} exceed maximum {MAX_DIMENSION}x{MAX_DIMENSION}",
+            size.width(),
+            size.height()
+        )));
+    }
+
     let mut pixmap = tiny_skia::Pixmap::new(size.width(), size.height())
-        .ok_or_else(|| ScryError::Render("Failed to create pixmap (zero size?)".into()))?;
+        .ok_or_else(|| ScryError::Render("Failed to create pixmap".into()))?;
     resvg::render(&tree, tiny_skia::Transform::default(), &mut pixmap.as_mut());
     pixmap
         .encode_png()
@@ -51,5 +66,16 @@ mod tests {
     fn test_render_invalid_svg() {
         let result = svg_to_png("not svg at all");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_render_rejects_huge_dimensions() {
+        let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="10000" height="10000">
+            <rect fill="red" width="10000" height="10000"/>
+        </svg>"#;
+        let result = svg_to_png(svg);
+        assert!(result.is_err(), "should reject dimensions > 8192");
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("exceed maximum"), "error should mention limit: {err}");
     }
 }

@@ -59,6 +59,23 @@ impl ScryServer {
         if let Err(msg) = validate_board_name(&name) {
             return Ok(CallToolResult::error(vec![Content::text(msg)]));
         }
+        if w == 0 || h == 0 {
+            return Ok(CallToolResult::error(vec![Content::text(
+                "Width and height must be greater than zero",
+            )]));
+        }
+        if w > 8192 || h > 8192 {
+            return Ok(CallToolResult::error(vec![Content::text(
+                "Width and height must be at most 8192",
+            )]));
+        }
+        const MAX_CODE_LEN: usize = 1_000_000; // 1 MB
+        if code.len() > MAX_CODE_LEN {
+            return Ok(CallToolResult::error(vec![Content::text(format!(
+                "Code too large ({} bytes, max {MAX_CODE_LEN})",
+                code.len()
+            ))]));
+        }
 
         // Get or create namespace atomically under write lock to prevent
         // TOCTOU race where two concurrent requests for a new board both
@@ -139,6 +156,10 @@ impl ScryServer {
             let mut boards = self.state.boards.write().await;
             if let Some(board) = boards.get_mut(&name) {
                 if !board.svg.is_empty() {
+                    const MAX_HISTORY: usize = 50;
+                    if board.history.len() >= MAX_HISTORY {
+                        board.history.remove(0);
+                    }
                     board.history.push(Snapshot {
                         svg: board.svg.clone(),
                         png: board.png.clone(),
