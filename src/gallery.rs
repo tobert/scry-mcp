@@ -1,4 +1,4 @@
-use crate::board::SharedState;
+use crate::board::{SharedState, html_escape, url_encode};
 use axum::extract::{Path, State};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Redirect, Response};
@@ -30,26 +30,29 @@ async fn gallery_index(State(state): State<SharedState>) -> Html<String> {
     board_list.sort_by_key(|b| std::cmp::Reverse(b.updated_at));
 
     for board in board_list {
+        let name_url = url_encode(&board.name);
+        let name_html = html_escape(&board.name);
         let has_image = !board.png.is_empty();
         let img_tag = if has_image {
             format!(
                 r#"<img src="/gallery/board/{}/png" alt="{}" loading="lazy">"#,
-                board.name, board.name
+                name_url, name_html
             )
         } else {
             "<div class=\"placeholder\">No render yet</div>".to_string()
         };
 
         cards.push_str(&format!(
-            r#"<div class="card" onclick="location.href='/gallery/board/{name}'">
+            r#"<div class="card" onclick="location.href='/gallery/board/{name_url}'">
                 <div class="card-img">{img_tag}</div>
                 <div class="card-info">
-                    <h2>{name}</h2>
+                    <h2>{name_html}</h2>
                     <span class="dim">{w}x{h} &middot; {updated}</span>
                 </div>
             </div>"#,
-            name = board.name,
+            name_url = name_url,
             img_tag = img_tag,
+            name_html = name_html,
             w = board.width,
             h = board.height,
             updated = board.updated_at.format("%H:%M:%S"),
@@ -86,13 +89,15 @@ async fn board_detail(
     Path(name): Path<String>,
 ) -> Response {
     let boards = state.boards.read().await;
+    let name_html = html_escape(&name);
+    let name_url = url_encode(&name);
     let Some(board) = boards.get(&name) else {
         return Html(format!(
             r#"<!DOCTYPE html><html><head><style>{CSS}</style></head>
-            <body><h1>Board not found: {name}</h1>
+            <body><h1>Board not found: {name_html}</h1>
             <a href="/gallery/">Back to gallery</a></body></html>"#,
             CSS = CSS,
-            name = name,
+            name_html = name_html,
         ))
         .into_response();
     };
@@ -101,24 +106,21 @@ async fn board_detail(
         let b64 = BASE64.encode(&board.png);
         format!(
             r#"<div class="board-img">
-                <img src="data:image/png;base64,{b64}" alt="{name}">
+                <img src="data:image/png;base64,{b64}" alt="{name_html}">
             </div>
             <div class="links">
-                <a href="/gallery/board/{name}/png">Raw PNG</a>
-                <a href="/gallery/board/{name}/svg">Raw SVG</a>
+                <a href="/gallery/board/{name_url}/png">Raw PNG</a>
+                <a href="/gallery/board/{name_url}/svg">Raw SVG</a>
             </div>"#,
             b64 = b64,
-            name = board.name,
+            name_html = name_html,
+            name_url = name_url,
         )
     } else {
         "<p>No render yet.</p>".to_string()
     };
 
-    let svg_escaped = board
-        .svg
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;");
+    let svg_escaped = html_escape(&board.svg);
 
     Html(format!(
         r#"<!DOCTYPE html>
@@ -126,13 +128,13 @@ async fn board_detail(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Scry — {name}</title>
+<title>Scry — {name_html}</title>
 <style>{CSS}</style>
 </head>
 <body>
 <header>
     <a href="/gallery/" class="back">&larr; Gallery</a>
-    <h1>{name}</h1>
+    <h1>{name_html}</h1>
     <span class="dim">{w}x{h} &middot; Updated {updated} &middot; {history_len} snapshots</span>
 </header>
 <main>
@@ -146,7 +148,7 @@ async fn board_detail(
 </body>
 </html>"#,
         CSS = CSS,
-        name = board.name,
+        name_html = name_html,
         w = board.width,
         h = board.height,
         updated = board.updated_at.format("%Y-%m-%d %H:%M:%S UTC"),
@@ -212,15 +214,18 @@ async fn sse_handler(
 }
 
 fn sse_board_js(board_name: &str) -> String {
+    // JSON-encode the board name to safely embed in a JS string literal
+    let js_safe = serde_json::to_string(board_name).unwrap_or_else(|_| "\"\"".into());
     format!(
         r#"const es = new EventSource('/gallery/events');
+const _boardName = {js_safe};
 es.onmessage = function(e) {{
     const data = JSON.parse(e.data);
-    if (data.board === '{}') {{
+    if (data.board === _boardName) {{
         location.reload();
     }}
 }};"#,
-        board_name
+        js_safe = js_safe,
     )
 }
 

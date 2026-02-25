@@ -1,4 +1,4 @@
-use crate::board::{Board, BoardEvent, BoardEventType, SharedState, Snapshot};
+use crate::board::{Board, BoardEvent, BoardEventType, SharedState, Snapshot, validate_board_name};
 use crate::python;
 use crate::render;
 use base64::Engine;
@@ -54,6 +54,11 @@ impl ScryServer {
         let code = params.code;
         let w = params.width.unwrap_or(800);
         let h = params.height.unwrap_or(600);
+
+        // Validate inputs
+        if let Err(msg) = validate_board_name(&name) {
+            return Ok(CallToolResult::error(vec![Content::text(msg)]));
+        }
 
         // Get or create namespace atomically under write lock to prevent
         // TOCTOU race where two concurrent requests for a new board both
