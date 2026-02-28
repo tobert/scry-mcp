@@ -67,14 +67,16 @@ function createMcpServer(): McpServer {
         "Rhai syntax essentials: `let x = 1;` for variables, `for i in range(0, n)` for loops, " +
         "`if x > 0 { ... } else { ... }` for branches. String interpolation: `${expr}` inside backtick strings. " +
         "No `const`, no `++/--`, no ternary. Use `+` to concatenate strings.\n\n" +
-        "Read the scry://rhai-primer and scry://builtins resources for full syntax and available functions.",
+        "Read the scry://rhai-primer and scry://builtins resources for full syntax and available functions.\n\n" +
+        "Always provide `alt` text describing the visual for accessibility.",
       inputSchema: {
         name: z.string().describe("Name of the board (creates new if doesn't exist)"),
         code: z.string().describe("Rhai code to execute. Call svg(`<svg>...</svg>`) to set SVG content."),
         width: z.number().int().optional().describe("Board width in pixels (default 800)"),
         height: z.number().int().optional().describe("Board height in pixels (default 600)"),
         alt: z.string().optional().describe(
-          "Alt text describing the visual. Placed last in output for easy copy/paste.",
+          "Alt text describing the visual. Placed last in output for easy copy/paste. " +
+          "Recommended: always provide a concise description for accessibility (embedded as <desc> in SVG, iTXt in PNG).",
         ),
       },
     },
