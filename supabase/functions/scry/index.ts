@@ -215,7 +215,7 @@ function createMcpServer(): McpServer {
         result.svg.length > 200 ? result.svg.slice(0, 200) + "..." : result.svg;
 
       const parts: string[] = [
-        `Board: ${name}\nSize: ${w}x${h}\nView: ${viewUrl(shareId)}`,
+        `Board: ${name}\nSize: ${w}x${h}\nView: ${viewUrl(shareId)}\nPNG: ${viewUrl(shareId)}/png`,
       ];
       if (result.stdout) {
         parts.push(`--- stdout ---\n${result.stdout}`);
@@ -286,6 +286,7 @@ function createMcpServer(): McpServer {
           `Board: ${b.name}\n` +
           `Size: ${b.width}x${b.height}\n` +
           `View: ${viewUrl(b.share_id)}\n` +
+          `PNG: ${viewUrl(b.share_id)}/png\n` +
           `Created: ${b.created_at}\n` +
           `Updated: ${b.updated_at}\n` +
           `History: ${snapshots} snapshots`

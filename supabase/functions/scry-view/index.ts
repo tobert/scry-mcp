@@ -1,5 +1,19 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { Resvg, initWasm } from "npm:@resvg/resvg-wasm@2.6.2";
+
+// ---------------------------------------------------------------------------
+// Initialize resvg Wasm — same pattern as rhai_wasm.ts
+// ---------------------------------------------------------------------------
+const resvgWasmPath = new URL("./resvg_bg.wasm", import.meta.url);
+let resvgWasmBytes: BufferSource;
+try {
+  resvgWasmBytes = await Deno.readFile(resvgWasmPath);
+} catch {
+  const resp = await fetch(resvgWasmPath);
+  resvgWasmBytes = await resp.arrayBuffer();
+}
+await initWasm(resvgWasmBytes);
 
 // ---------------------------------------------------------------------------
 // Supabase client (service role to bypass RLS for read-only queries)
@@ -51,7 +65,7 @@ function viewerSvg(boardName: string, boardSvg: string, width: number, height: n
 // ---------------------------------------------------------------------------
 // HTTP handler — read-only board viewer
 // ---------------------------------------------------------------------------
-const UUID_RE = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(\/svg)?$/i;
+const UUID_RE = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(\/(?:svg|png))?$/i;
 
 Deno.serve(async (req) => {
   if (req.method !== "GET") {
@@ -65,7 +79,7 @@ Deno.serve(async (req) => {
   }
 
   const shareId = match[1];
-  const rawSvg = !!match[2];
+  const suffix = match[2]; // "/svg", "/png", or undefined
 
   const { data: board, error } = await supabase
     .from("boards")
@@ -83,8 +97,26 @@ Deno.serve(async (req) => {
 
   const svgHeaders = { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=60" };
 
-  if (rawSvg) {
+  if (suffix === "/svg") {
     return new Response(board.svg, { headers: svgHeaders });
+  }
+
+  if (suffix === "/png") {
+    const MAX_PNG_DIM = 4096;
+    if (board.width > MAX_PNG_DIM || board.height > MAX_PNG_DIM) {
+      return new Response(
+        `Board too large for PNG rendering (${board.width}x${board.height}, max ${MAX_PNG_DIM}x${MAX_PNG_DIM})`,
+        { status: 422, headers: { "Content-Type": "text/plain" } },
+      );
+    }
+    const resvg = new Resvg(board.svg, { fitTo: { mode: "original" } });
+    const rendered = resvg.render();
+    const pngBytes = rendered.asPng();
+    rendered.free();
+    resvg.free();
+    return new Response(pngBytes, {
+      headers: { "Content-Type": "image/png", "Cache-Control": "public, max-age=300" },
+    });
   }
 
   return new Response(viewerSvg(board.name, board.svg, board.width, board.height), {
