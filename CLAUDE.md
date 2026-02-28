@@ -1,8 +1,22 @@
 # Scry MCP
 
-scry-mcp is an MCP built in rust with two tools: `whiteboard()` and `whiteboard_list()`.
-A whiteboard call includes python code for generating SVG.
+scry-mcp is an MCP with two tools: `whiteboard()` and `whiteboard_list()`.
 
-The pyO3 python interpreter has advisory sandboxing to prevent mistakes, but is not intended
-as a security measure. Use virtual machines or containers to help with that.
+## Branches
+
+### `main` — Rust/stdio version
+A whiteboard call includes Python code for generating SVG. Uses PyO3 with advisory
+sandboxing. Runs as stdio MCP transport.
+
+### `prototype-supabase-service` — Supabase Edge Function version
+Runs as HTTP MCP (Streamable HTTP transport) on Supabase Edge Functions. Uses Rhai
+(not Python) via a Wasm module for script execution. Boards persist to Postgres.
+
+Key files:
+- `supabase/functions/scry/index.ts` — MCP server (Hono + MCP SDK)
+- `supabase/functions/scry/rhai_wasm.ts` — Custom Wasm loader for Rhai sandbox
+- `supabase/functions/scry/rhai-sandbox/` — Rust crate compiled to Wasm via wasm-pack
+
+Rebuild Wasm: `cd supabase/functions/scry/rhai-sandbox && wasm-pack build --target deno --release`
+Deploy: `SUPABASE_ACCESS_TOKEN=$(< ~/.supabase-key) npx supabase functions deploy scry --no-verify-jwt`
 

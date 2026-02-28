@@ -1,1 +1,9 @@
 /target
+node_modules/
+package.json
+package-lock.json
+supabase/.temp/
+
+# Rhai Wasm build artifacts (rebuild with: cd supabase/functions/scry/rhai-sandbox && wasm-pack build --target deno --release)
+supabase/functions/scry/rhai-sandbox/target/
+supabase/functions/scry/rhai-sandbox/pkg/

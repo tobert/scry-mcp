@@ -1,0 +1,2 @@
+[functions.scry]
+static_files = ["./functions/scry/rhai-sandbox/pkg/*"]
