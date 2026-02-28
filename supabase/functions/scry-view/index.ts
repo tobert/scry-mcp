@@ -16,6 +16,24 @@ try {
 await initWasm(resvgWasmBytes);
 
 // ---------------------------------------------------------------------------
+// Load bundled fonts for PNG rendering (Edge Functions have no system fonts)
+// ---------------------------------------------------------------------------
+async function loadFont(name: string): Promise<Uint8Array> {
+  const fontPath = new URL(`./fonts/${name}`, import.meta.url);
+  try {
+    return await Deno.readFile(fontPath);
+  } catch {
+    const resp = await fetch(fontPath);
+    return new Uint8Array(await resp.arrayBuffer());
+  }
+}
+
+const fontBuffers = await Promise.all([
+  loadFont("DejaVuSans.ttf"),
+  loadFont("DejaVuSansMono.ttf"),
+]);
+
+// ---------------------------------------------------------------------------
 // Supabase client (service role to bypass RLS for read-only queries)
 // ---------------------------------------------------------------------------
 const supabase = createClient(
@@ -109,7 +127,15 @@ Deno.serve(async (req) => {
         { status: 422, headers: { "Content-Type": "text/plain" } },
       );
     }
-    const resvg = new Resvg(board.svg, { fitTo: { mode: "original" } });
+    const resvg = new Resvg(board.svg, {
+      fitTo: { mode: "original" },
+      font: {
+        fontBuffers,
+        defaultFontFamily: "DejaVu Sans",
+        sansSerifFamily: "DejaVu Sans",
+        monospaceFamily: "DejaVu Sans Mono",
+      },
+    });
     const rendered = resvg.render();
     const pngBytes = rendered.asPng();
     rendered.free();
