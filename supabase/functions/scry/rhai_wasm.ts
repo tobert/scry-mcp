@@ -188,3 +188,18 @@ export function execute(code: string, scopeJson: string, width: bigint, height: 
     }
   }
 }
+
+export function metadata(): string {
+  let deferred0: number | undefined;
+  let deferred1: number | undefined;
+  try {
+    const ret = wasm.metadata();
+    deferred0 = ret[0];
+    deferred1 = ret[1];
+    return getStringFromWasm0(ret[0], ret[1]);
+  } finally {
+    if (deferred0 !== undefined && deferred1 !== undefined) {
+      wasm.__wbindgen_free(deferred0, deferred1, 1);
+    }
+  }
+}

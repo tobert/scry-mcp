@@ -21,15 +21,21 @@ thread_local! {
     static STDOUT_BUF: RefCell<String> = RefCell::new(String::new());
 }
 
+// Sandbox limits — used by build_engine() and exported via metadata()
+const MAX_OPERATIONS: u64 = 100_000;
+const MAX_CALL_LEVELS: usize = 32;
+const MAX_STRING_SIZE: usize = 1_000_000;
+const MAX_ARRAY_SIZE: usize = 10_000;
+const MAX_MAP_SIZE: usize = 1_000;
+
 fn build_engine() -> Engine {
     let mut engine = Engine::new();
 
-    // Resource limits to prevent runaway scripts
-    engine.set_max_operations(100_000);
-    engine.set_max_call_levels(32);
-    engine.set_max_string_size(1_000_000);
-    engine.set_max_array_size(10_000);
-    engine.set_max_map_size(1_000);
+    engine.set_max_operations(MAX_OPERATIONS);
+    engine.set_max_call_levels(MAX_CALL_LEVELS);
+    engine.set_max_string_size(MAX_STRING_SIZE);
+    engine.set_max_array_size(MAX_ARRAY_SIZE);
+    engine.set_max_map_size(MAX_MAP_SIZE);
 
     // Override print/debug to capture stdout
     engine.on_print(|s| {
@@ -173,6 +179,47 @@ fn scope_to_json(scope: &Scope) -> String {
         map.insert(name.to_string(), dynamic_to_json(&value));
     }
     serde_json::to_string(&map).unwrap_or_else(|_| "{}".to_string())
+}
+
+/// Returns sandbox metadata as JSON: limits and registered builtins.
+/// Used by the MCP server to generate resource content dynamically.
+#[wasm_bindgen]
+pub fn metadata() -> String {
+    serde_json::json!({
+        "limits": {
+            "max_operations": MAX_OPERATIONS,
+            "max_call_levels": MAX_CALL_LEVELS,
+            "max_string_size": MAX_STRING_SIZE,
+            "max_array_size": MAX_ARRAY_SIZE,
+            "max_map_size": MAX_MAP_SIZE,
+        },
+        "builtins": [
+            { "name": "svg",     "sig": "svg(content: string)",     "doc": "Set board SVG content. Call once per execution." },
+            { "name": "print",   "sig": "print(value)",             "doc": "Print to stdout (returned in tool response)." },
+            { "name": "sin",     "sig": "sin(x: f64) -> f64",      "doc": "Sine." },
+            { "name": "cos",     "sig": "cos(x: f64) -> f64",      "doc": "Cosine." },
+            { "name": "tan",     "sig": "tan(x: f64) -> f64",      "doc": "Tangent." },
+            { "name": "asin",    "sig": "asin(x: f64) -> f64",     "doc": "Arc sine." },
+            { "name": "acos",    "sig": "acos(x: f64) -> f64",     "doc": "Arc cosine." },
+            { "name": "atan",    "sig": "atan(x: f64) -> f64",     "doc": "Arc tangent." },
+            { "name": "atan2",   "sig": "atan2(y: f64, x: f64) -> f64", "doc": "Two-argument arc tangent." },
+            { "name": "sqrt",    "sig": "sqrt(x: f64) -> f64",     "doc": "Square root." },
+            { "name": "abs_f",   "sig": "abs_f(x: f64) -> f64",    "doc": "Absolute value." },
+            { "name": "floor",   "sig": "floor(x: f64) -> f64",    "doc": "Floor." },
+            { "name": "ceil",    "sig": "ceil(x: f64) -> f64",     "doc": "Ceiling." },
+            { "name": "round",   "sig": "round(x: f64) -> f64",    "doc": "Round to nearest integer." },
+            { "name": "min_f",   "sig": "min_f(a: f64, b: f64) -> f64", "doc": "Minimum of two floats." },
+            { "name": "max_f",   "sig": "max_f(a: f64, b: f64) -> f64", "doc": "Maximum of two floats." },
+            { "name": "PI",      "sig": "PI() -> f64",             "doc": "Returns \u{03c0} (3.14159...)." },
+            { "name": "TAU",     "sig": "TAU() -> f64",            "doc": "Returns \u{03c4} (6.28318...)." },
+            { "name": "to_float","sig": "to_float(x: i64) -> f64", "doc": "Integer to float." },
+            { "name": "to_int",  "sig": "to_int(x: f64) -> i64",  "doc": "Float to integer (truncates toward zero)." },
+        ],
+        "constants": [
+            { "name": "WIDTH",  "type": "i64", "doc": "Board width in pixels (read-only, set per execution)." },
+            { "name": "HEIGHT", "type": "i64", "doc": "Board height in pixels (read-only, set per execution)." },
+        ],
+    }).to_string()
 }
 
 /// Execute a Rhai script with the given scope and board dimensions.

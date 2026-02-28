@@ -3,7 +3,19 @@ import { McpServer } from "npm:@modelcontextprotocol/sdk@1.25.3/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "npm:@modelcontextprotocol/sdk@1.25.3/server/webStandardStreamableHttp.js";
 import { z } from "npm:zod@^3.25.63";
 import { createClient } from "npm:@supabase/supabase-js@2";
-import { execute as rhaiExecute } from "./rhai_wasm.ts";
+import { execute as rhaiExecute, metadata as rhaiMetadata } from "./rhai_wasm.ts";
+
+// ---------------------------------------------------------------------------
+// Bearer token auth — checked before any request is processed
+// ---------------------------------------------------------------------------
+const SCRY_API_KEY = Deno.env.get("SCRY_API_KEY");
+
+function checkAuth(req: Request): Response | null {
+  if (!SCRY_API_KEY) return null; // no key configured = open (dev mode)
+  const auth = req.headers.get("authorization");
+  if (auth === `Bearer ${SCRY_API_KEY}`) return null;
+  return new Response("Unauthorized", { status: 401, headers: { "Content-Type": "text/plain" } });
+}
 
 // ---------------------------------------------------------------------------
 // Supabase client (uses auto-injected env vars, service role bypasses RLS)
@@ -50,18 +62,15 @@ function createMcpServer(): McpServer {
     {
       title: "Whiteboard",
       description:
-        "Execute Rhai code to generate SVG visuals on a named board. " +
-        "Call svg('<svg>...</svg>') in your code to set the board's SVG content. " +
-        "Variables persist between calls to the same board. " +
-        "Available: math functions (sin, cos, sqrt, etc.), print(), string interpolation. " +
-        "WIDTH and HEIGHT are preset to board dimensions.",
+        "Execute Rhai code to generate SVG visuals on a named board. Call svg(`<svg>...</svg>`) to set SVG content. " +
+        "Variables persist between calls to the same board. WIDTH and HEIGHT constants are preset to board dimensions.\n\n" +
+        "Rhai syntax essentials: `let x = 1;` for variables, `for i in range(0, n)` for loops, " +
+        "`if x > 0 { ... } else { ... }` for branches. String interpolation: `${expr}` inside backtick strings. " +
+        "No `const`, no `++/--`, no ternary. Use `+` to concatenate strings.\n\n" +
+        "Read the scry://rhai-primer and scry://builtins resources for full syntax and available functions.",
       inputSchema: {
         name: z.string().describe("Name of the board (creates new if doesn't exist)"),
-        code: z.string().describe(
-          "Rhai code to execute. Call svg(`<svg>...</svg>`) to set SVG content. " +
-            "Variables persist across calls to the same board. " +
-            "WIDTH and HEIGHT are preset to board dimensions.",
-        ),
+        code: z.string().describe("Rhai code to execute. Call svg(`<svg>...</svg>`) to set SVG content."),
         width: z.number().int().optional().describe("Board width in pixels (default 800)"),
         height: z.number().int().optional().describe("Board height in pixels (default 600)"),
       },
@@ -289,100 +298,136 @@ function createMcpServer(): McpServer {
     },
   );
 
+  // =========================================================================
+  // Resources — generated from Rhai sandbox metadata
+  // =========================================================================
+  const meta = JSON.parse(rhaiMetadata());
+
+  server.registerResource(
+    "rhai-primer",
+    "scry://rhai-primer",
+    { description: "Compact Rhai language primer for generating SVG on Scry boards", mimeType: "text/plain" },
+    () => {
+      const lim = meta.limits;
+      return {
+        contents: [{
+          uri: "scry://rhai-primer",
+          mimeType: "text/plain",
+          text:
+`Rhai Primer for Scry
+=====================
+Rhai is a Rust-embedded scripting language. Syntax resembles Rust/JS but differs in key ways.
+
+Variables & Types
+  let x = 42;          // integer (i64)
+  let y = 3.14;        // float (f64)
+  let s = "hello";     // string (double quotes)
+  let a = [1, 2, 3];   // array
+  let m = #{ k: "v" }; // object map (note the #)
+  // No 'const'. No 'var'. Only 'let'.
+
+Strings & Interpolation
+  let name = "world";
+  let msg = \`hello \${name}\`;  // backtick strings support \${expr}
+  let cat = "a" + "b";         // concatenation with +
+  // Double-quoted strings do NOT interpolate.
+
+Control Flow
+  if x > 0 { "pos" } else { "neg" }   // if/else (braces required)
+  for i in range(0, 10) { ... }        // for loop (exclusive end)
+  while x > 0 { x -= 1; }             // while loop
+  loop { if done { break; } }         // infinite loop + break
+  // No ternary (?:), no for(;;), no ++/--.
+
+Functions & Closures
+  fn double(x) { x * 2 }       // fn keyword, no type annotations
+  let add = |a, b| a + b;      // closures
+
+Arrays & Maps
+  let a = [10, 20, 30];
+  a.len();  a.push(40);  for v in a { print(v); }
+  let m = #{ x: 1, y: 2 };
+  m.x;  m.keys();
+
+SVG Pattern
+  let body = "";
+  for i in range(0, 5) {
+    let cx = 100 + i * 150;
+    body += \`<circle cx="\${cx}" cy="300" r="40" fill="teal"/>\`;
+  }
+  svg(\`<svg xmlns="http://www.w3.org/2000/svg" width="\${WIDTH}" height="\${HEIGHT}" viewBox="0 0 \${WIDTH} \${HEIGHT}">\${body}</svg>\`);
+
+Sandbox Limits
+  Max operations: ${lim.max_operations}
+  Max call depth: ${lim.max_call_levels}
+  Max string size: ${lim.max_string_size} bytes
+  Max array size: ${lim.max_array_size} elements
+  Max map size: ${lim.max_map_size} entries`,
+        }],
+      };
+    },
+  );
+
+  server.registerResource(
+    "builtins",
+    "scry://builtins",
+    { description: "All functions available in the Scry Rhai sandbox", mimeType: "text/plain" },
+    () => {
+      const lines: string[] = ["Scry Rhai Builtins", "==================", ""];
+
+      // Group builtins by category based on name patterns
+      for (const fn of meta.builtins) {
+        lines.push(`  ${fn.sig.padEnd(34)} ${fn.doc}`);
+      }
+
+      lines.push("");
+      lines.push("Constants (read-only, set per execution)");
+      for (const c of meta.constants) {
+        lines.push(`  ${c.name.padEnd(10)} ${c.type.padEnd(6)} ${c.doc}`);
+      }
+
+      lines.push("");
+      lines.push("Standard Rhai (built-in, not listed above)");
+      lines.push("  Arithmetic:  + - * / %  on i64 and f64");
+      lines.push("  Comparison:  == != < > <= >=");
+      lines.push("  Logic:       && || !");
+      lines.push("  Strings:     .len() .contains(s) .trim() .to_upper() .to_lower()");
+      lines.push("               .sub_string(start, len) .replace(old, new)");
+      lines.push("  Arrays:      .len() .push(v) .pop() .insert(i, v) .remove(i)");
+      lines.push("               .reverse() .sort() .map(|v| ...) .filter(|v| ...)");
+      lines.push("               .reduce(|acc, v| ...) .for_each(|v| ...)");
+      lines.push("  Maps:        .keys() .values() .len() .contains(key) .remove(key)");
+      lines.push("  range(start, end)          // exclusive end, returns iterator");
+      lines.push("  range(start, end, step)    // with step");
+
+      return {
+        contents: [{
+          uri: "scry://builtins",
+          mimeType: "text/plain",
+          text: lines.join("\n"),
+        }],
+      };
+    },
+  );
+
   return server;
 }
 
 // ---------------------------------------------------------------------------
-// View URL helpers
+// View URL helper — points to the separate scry-view function
 // ---------------------------------------------------------------------------
-function viewBaseUrl(): string {
-  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-  // SUPABASE_URL is like https://<ref>.supabase.co — rewrite to functions path
-  return `${supabaseUrl}/functions/v1/scry/view`;
-}
-
 function viewUrl(shareId: string): string {
-  return `${viewBaseUrl()}/${shareId}`;
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  return `${supabaseUrl}/functions/v1/scry-view/${shareId}`;
 }
 
 // ---------------------------------------------------------------------------
-// Board viewer SVG wrapper
-// ---------------------------------------------------------------------------
-// Supabase Edge Functions rewrite text/html → text/plain, so the viewer is a
-// standalone SVG with dark background + title that browsers render natively.
-function viewerSvg(boardName: string, boardSvg: string, width: number, height: number): string {
-  const escapedName = boardName.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  const padding = 32;
-  const titleHeight = 40;
-  const metaHeight = 28;
-  const totalW = width + padding * 2;
-  const totalH = height + padding * 2 + titleHeight + metaHeight;
-  const boardY = padding + titleHeight;
-
-  // Strip any <?xml?> or <!DOCTYPE> from the inner SVG, and extract just the <svg ...>...</svg>
-  const innerSvg = boardSvg
-    .replace(/<\?xml[^?]*\?>/gi, "")
-    .replace(/<!DOCTYPE[^>]*>/gi, "")
-    .trim();
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${totalW} ${totalH}" width="${totalW}" height="${totalH}">
-  <rect width="100%" height="100%" fill="#1a1a2e" rx="8"/>
-  <text x="${totalW / 2}" y="${padding + 20}" text-anchor="middle"
-        font-family="system-ui, sans-serif" font-size="16" fill="#e0e0e0" opacity="0.7">
-    ${escapedName}
-  </text>
-  <rect x="${padding}" y="${boardY}" width="${width}" height="${height}"
-        fill="#16213e" rx="6"/>
-  <svg x="${padding}" y="${boardY}" width="${width}" height="${height}">
-    ${innerSvg}
-  </svg>
-  <text x="${totalW / 2}" y="${totalH - 8}" text-anchor="middle"
-        font-family="system-ui, sans-serif" font-size="11" fill="#e0e0e0" opacity="0.35">
-    ${width}×${height} · Scry
-  </text>
-</svg>`;
-}
-
-// ---------------------------------------------------------------------------
-// HTTP handler
+// HTTP handler — pure MCP transport
 // ---------------------------------------------------------------------------
 Deno.serve(async (req) => {
-  const url = new URL(req.url);
-  const path = url.pathname;
+  const denied = checkAuth(req);
+  if (denied) return denied;
 
-  // Match /scry/view/:share_id or /scry/view/:share_id/svg
-  const viewMatch = path.match(/^\/scry\/view\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(\/svg)?$/i);
-  if (viewMatch && req.method === "GET") {
-    const shareId = viewMatch[1];
-    const rawSvg = !!viewMatch[2];
-
-    const { data: board, error } = await supabase
-      .from("boards")
-      .select("name, width, height, svg")
-      .eq("share_id", shareId)
-      .maybeSingle();
-
-    if (error || !board) {
-      return new Response("Board not found", { status: 404, headers: { "Content-Type": "text/plain" } });
-    }
-
-    if (!board.svg) {
-      return new Response("Board has no SVG content", { status: 404, headers: { "Content-Type": "text/plain" } });
-    }
-
-    const svgHeaders = { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=60" };
-
-    if (rawSvg) {
-      return new Response(board.svg, { headers: svgHeaders });
-    }
-
-    return new Response(viewerSvg(board.name, board.svg, board.width, board.height), {
-      headers: svgHeaders,
-    });
-  }
-
-  // Everything else → MCP transport
   const server = createMcpServer();
   const transport = new WebStandardStreamableHTTPServerTransport();
   await server.connect(transport);
