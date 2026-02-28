@@ -73,9 +73,12 @@ function createMcpServer(): McpServer {
         code: z.string().describe("Rhai code to execute. Call svg(`<svg>...</svg>`) to set SVG content."),
         width: z.number().int().optional().describe("Board width in pixels (default 800)"),
         height: z.number().int().optional().describe("Board height in pixels (default 600)"),
+        alt: z.string().optional().describe(
+          "Alt text describing the visual. Placed last in output for easy copy/paste.",
+        ),
       },
     },
-    async ({ name, code, width, height }) => {
+    async ({ name, code, width, height, alt }) => {
       const w = width ?? 800;
       const h = height ?? 600;
 
@@ -108,11 +111,21 @@ function createMcpServer(): McpServer {
           isError: true,
         };
       }
+      const MAX_ALT_LEN = 2000;
+      if (alt && new TextEncoder().encode(alt).length > MAX_ALT_LEN) {
+        return {
+          content: [
+            { type: "text" as const, text: `Alt text too long (max ${MAX_ALT_LEN} bytes)` },
+          ],
+          isError: true,
+        };
+      }
+      const altText = alt ?? "";
 
       // Load existing board or prepare defaults
       const { data: existing } = await supabase
         .from("boards")
-        .select("name, namespace, width, height, svg, share_id")
+        .select("name, namespace, width, height, svg, share_id, alt")
         .eq("name", name)
         .maybeSingle();
 
@@ -166,11 +179,12 @@ function createMcpServer(): McpServer {
             height: h,
             svg: "",
             namespace: newNamespace,
+            alt: altText,
           });
         } else {
           await supabase
             .from("boards")
-            .update({ namespace: newNamespace, width: w, height: h })
+            .update({ namespace: newNamespace, width: w, height: h, alt: altText })
             .eq("name", name);
         }
 
@@ -186,17 +200,18 @@ function createMcpServer(): McpServer {
       if (isNewBoard) {
         const { data: inserted } = await supabase
           .from("boards")
-          .insert({ name, width: w, height: h, svg: result.svg, namespace: newNamespace })
+          .insert({ name, width: w, height: h, svg: result.svg, namespace: newNamespace, alt: altText })
           .select("share_id")
           .single();
         shareId = inserted!.share_id;
       } else {
         shareId = existing.share_id;
-        // Push old SVG to history before overwriting
+        // Push old SVG + alt to history before overwriting
         if (existing.svg) {
           await supabase.from("board_history").insert({
             board_name: name,
             svg: existing.svg,
+            alt: existing.alt ?? "",
           });
         }
         await supabase
@@ -206,6 +221,7 @@ function createMcpServer(): McpServer {
             namespace: newNamespace,
             width: w,
             height: h,
+            alt: altText,
           })
           .eq("name", name);
       }
@@ -221,6 +237,9 @@ function createMcpServer(): McpServer {
         parts.push(`--- stdout ---\n${result.stdout}`);
       }
       parts.push(`--- SVG (snippet) ---\n${svgSnippet}`);
+      if (altText) {
+        parts.push(`--- Alt ---\n${altText}`);
+      }
 
       return {
         content: [{ type: "text" as const, text: parts.join("\n\n") }],
@@ -241,7 +260,7 @@ function createMcpServer(): McpServer {
     async () => {
       const { data: boards, error } = await supabase
         .from("boards")
-        .select("name, width, height, created_at, updated_at, share_id")
+        .select("name, width, height, created_at, updated_at, share_id, alt")
         .order("updated_at", { ascending: false });
 
       if (error) {
@@ -289,7 +308,8 @@ function createMcpServer(): McpServer {
           `PNG: ${viewUrl(b.share_id)}/png\n` +
           `Created: ${b.created_at}\n` +
           `Updated: ${b.updated_at}\n` +
-          `History: ${snapshots} snapshots`
+          `History: ${snapshots} snapshots` +
+          (b.alt ? `\nAlt: ${b.alt}` : "")
         );
       });
 
