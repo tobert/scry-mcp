@@ -103,7 +103,7 @@ function createMcpServer(): McpServer {
       // Load existing board or prepare defaults
       const { data: existing } = await supabase
         .from("boards")
-        .select("name, namespace, width, height, svg")
+        .select("name, namespace, width, height, svg, share_id")
         .eq("name", name)
         .maybeSingle();
 
@@ -173,15 +173,16 @@ function createMcpServer(): McpServer {
       }
 
       // SVG was produced — persist board + history
+      let shareId: string;
       if (isNewBoard) {
-        await supabase.from("boards").insert({
-          name,
-          width: w,
-          height: h,
-          svg: result.svg,
-          namespace: newNamespace,
-        });
+        const { data: inserted } = await supabase
+          .from("boards")
+          .insert({ name, width: w, height: h, svg: result.svg, namespace: newNamespace })
+          .select("share_id")
+          .single();
+        shareId = inserted!.share_id;
       } else {
+        shareId = existing.share_id;
         // Push old SVG to history before overwriting
         if (existing.svg) {
           await supabase.from("board_history").insert({
@@ -204,7 +205,9 @@ function createMcpServer(): McpServer {
       const svgSnippet =
         result.svg.length > 200 ? result.svg.slice(0, 200) + "..." : result.svg;
 
-      const parts: string[] = [`Board: ${name}\nSize: ${w}x${h}`];
+      const parts: string[] = [
+        `Board: ${name}\nSize: ${w}x${h}\nView: ${viewUrl(shareId)}`,
+      ];
       if (result.stdout) {
         parts.push(`--- stdout ---\n${result.stdout}`);
       }
@@ -229,7 +232,7 @@ function createMcpServer(): McpServer {
     async () => {
       const { data: boards, error } = await supabase
         .from("boards")
-        .select("name, width, height, created_at, updated_at")
+        .select("name, width, height, created_at, updated_at, share_id")
         .order("updated_at", { ascending: false });
 
       if (error) {
@@ -273,6 +276,7 @@ function createMcpServer(): McpServer {
         return (
           `Board: ${b.name}\n` +
           `Size: ${b.width}x${b.height}\n` +
+          `View: ${viewUrl(b.share_id)}\n` +
           `Created: ${b.created_at}\n` +
           `Updated: ${b.updated_at}\n` +
           `History: ${snapshots} snapshots`
@@ -289,9 +293,96 @@ function createMcpServer(): McpServer {
 }
 
 // ---------------------------------------------------------------------------
+// View URL helpers
+// ---------------------------------------------------------------------------
+function viewBaseUrl(): string {
+  const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
+  // SUPABASE_URL is like https://<ref>.supabase.co — rewrite to functions path
+  return `${supabaseUrl}/functions/v1/scry/view`;
+}
+
+function viewUrl(shareId: string): string {
+  return `${viewBaseUrl()}/${shareId}`;
+}
+
+// ---------------------------------------------------------------------------
+// Board viewer SVG wrapper
+// ---------------------------------------------------------------------------
+// Supabase Edge Functions rewrite text/html → text/plain, so the viewer is a
+// standalone SVG with dark background + title that browsers render natively.
+function viewerSvg(boardName: string, boardSvg: string, width: number, height: number): string {
+  const escapedName = boardName.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const padding = 32;
+  const titleHeight = 40;
+  const metaHeight = 28;
+  const totalW = width + padding * 2;
+  const totalH = height + padding * 2 + titleHeight + metaHeight;
+  const boardY = padding + titleHeight;
+
+  // Strip any <?xml?> or <!DOCTYPE> from the inner SVG, and extract just the <svg ...>...</svg>
+  const innerSvg = boardSvg
+    .replace(/<\?xml[^?]*\?>/gi, "")
+    .replace(/<!DOCTYPE[^>]*>/gi, "")
+    .trim();
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${totalW} ${totalH}" width="${totalW}" height="${totalH}">
+  <rect width="100%" height="100%" fill="#1a1a2e" rx="8"/>
+  <text x="${totalW / 2}" y="${padding + 20}" text-anchor="middle"
+        font-family="system-ui, sans-serif" font-size="16" fill="#e0e0e0" opacity="0.7">
+    ${escapedName}
+  </text>
+  <rect x="${padding}" y="${boardY}" width="${width}" height="${height}"
+        fill="#16213e" rx="6"/>
+  <svg x="${padding}" y="${boardY}" width="${width}" height="${height}">
+    ${innerSvg}
+  </svg>
+  <text x="${totalW / 2}" y="${totalH - 8}" text-anchor="middle"
+        font-family="system-ui, sans-serif" font-size="11" fill="#e0e0e0" opacity="0.35">
+    ${width}×${height} · Scry
+  </text>
+</svg>`;
+}
+
+// ---------------------------------------------------------------------------
 // HTTP handler
 // ---------------------------------------------------------------------------
 Deno.serve(async (req) => {
+  const url = new URL(req.url);
+  const path = url.pathname;
+
+  // Match /scry/view/:share_id or /scry/view/:share_id/svg
+  const viewMatch = path.match(/^\/scry\/view\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(\/svg)?$/i);
+  if (viewMatch && req.method === "GET") {
+    const shareId = viewMatch[1];
+    const rawSvg = !!viewMatch[2];
+
+    const { data: board, error } = await supabase
+      .from("boards")
+      .select("name, width, height, svg")
+      .eq("share_id", shareId)
+      .maybeSingle();
+
+    if (error || !board) {
+      return new Response("Board not found", { status: 404, headers: { "Content-Type": "text/plain" } });
+    }
+
+    if (!board.svg) {
+      return new Response("Board has no SVG content", { status: 404, headers: { "Content-Type": "text/plain" } });
+    }
+
+    const svgHeaders = { "Content-Type": "image/svg+xml", "Cache-Control": "public, max-age=60" };
+
+    if (rawSvg) {
+      return new Response(board.svg, { headers: svgHeaders });
+    }
+
+    return new Response(viewerSvg(board.name, board.svg, board.width, board.height), {
+      headers: svgHeaders,
+    });
+  }
+
+  // Everything else → MCP transport
   const server = createMcpServer();
   const transport = new WebStandardStreamableHTTPServerTransport();
   await server.connect(transport);

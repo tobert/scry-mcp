@@ -17,6 +17,11 @@ Key files:
 - `supabase/functions/scry/rhai_wasm.ts` — Custom Wasm loader for Rhai sandbox
 - `supabase/functions/scry/rhai-sandbox/` — Rust crate compiled to Wasm via wasm-pack
 
+Board viewer: Each board gets a `share_id` (UUID). View URLs are returned by both
+tools and served at `GET /scry/view/:share_id` (wrapper SVG with dark background +
+title) and `GET /scry/view/:share_id/svg` (raw SVG). Note: Supabase Edge Functions
+rewrite `text/html` to `text/plain`, so the viewer uses `image/svg+xml` instead.
+
 Rebuild Wasm: `cd supabase/functions/scry/rhai-sandbox && wasm-pack build --target deno --release`
 Deploy: `SUPABASE_ACCESS_TOKEN=$(< ~/.supabase-key) npx supabase functions deploy scry --no-verify-jwt`
 
