@@ -22,7 +22,7 @@ thread_local! {
 }
 
 // Sandbox limits — used by build_engine() and exported via metadata()
-const MAX_OPERATIONS: u64 = 100_000;
+const MAX_OPERATIONS: u64 = 500_000;
 const MAX_CALL_LEVELS: usize = 32;
 const MAX_STRING_SIZE: usize = 1_000_000;
 const MAX_ARRAY_SIZE: usize = 10_000;
