@@ -83,6 +83,32 @@ fn build_engine() -> Engine {
     engine.register_fn("max_f", |a: f64, b: f64| a.max(b));
     engine.register_fn("PI", || std::f64::consts::PI);
     engine.register_fn("TAU", || std::f64::consts::TAU);
+    engine.register_fn("E", || std::f64::consts::E);
+
+    // Powers, exponentials, logarithms
+    engine.register_fn("pow", |base: f64, exp: f64| base.powf(exp));
+    engine.register_fn("exp", |x: f64| x.exp());
+    engine.register_fn("ln", |x: f64| x.ln());
+    engine.register_fn("log2", |x: f64| x.log2());
+    engine.register_fn("log10", |x: f64| x.log10());
+
+    // Hyperbolic trig
+    engine.register_fn("sinh", |x: f64| x.sinh());
+    engine.register_fn("cosh", |x: f64| x.cosh());
+    engine.register_fn("tanh", |x: f64| x.tanh());
+
+    // Geometry / interpolation helpers
+    engine.register_fn("hypot", |x: f64, y: f64| x.hypot(y));
+    engine.register_fn("lerp", |a: f64, b: f64, t: f64| a + (b - a) * t);
+    engine.register_fn("clamp", |x: f64, min: f64, max: f64| x.clamp(min, max));
+    engine.register_fn("degrees", |x: f64| x.to_degrees());
+    engine.register_fn("radians", |x: f64| x.to_radians());
+
+    // Numeric utilities
+    engine.register_fn("fract", |x: f64| x.fract());
+    engine.register_fn("signum", |x: f64| x.signum());
+    engine.register_fn("rem_euclid", |x: f64, y: f64| x.rem_euclid(y));
+    engine.register_fn("copysign", |x: f64, y: f64| x.copysign(y));
 
     // String/number conversion helpers
     engine.register_fn("to_float", |x: i64| x as f64);
@@ -210,8 +236,26 @@ pub fn metadata() -> String {
             { "name": "round",   "sig": "round(x: f64) -> f64",    "doc": "Round to nearest integer." },
             { "name": "min_f",   "sig": "min_f(a: f64, b: f64) -> f64", "doc": "Minimum of two floats." },
             { "name": "max_f",   "sig": "max_f(a: f64, b: f64) -> f64", "doc": "Maximum of two floats." },
-            { "name": "PI",      "sig": "PI() -> f64",             "doc": "Returns \u{03c0} (3.14159...)." },
-            { "name": "TAU",     "sig": "TAU() -> f64",            "doc": "Returns \u{03c4} (6.28318...)." },
+            { "name": "PI",      "sig": "PI() -> f64",             "doc": "Returns π (3.14159...)." },
+            { "name": "TAU",     "sig": "TAU() -> f64",            "doc": "Returns τ (6.28318...)." },
+            { "name": "E",       "sig": "E() -> f64",              "doc": "Returns Euler's number e (2.71828...)." },
+            { "name": "pow",     "sig": "pow(base: f64, exp: f64) -> f64", "doc": "Exponentiation (base^exp)." },
+            { "name": "exp",     "sig": "exp(x: f64) -> f64",     "doc": "e^x." },
+            { "name": "ln",      "sig": "ln(x: f64) -> f64",      "doc": "Natural logarithm." },
+            { "name": "log2",    "sig": "log2(x: f64) -> f64",    "doc": "Base-2 logarithm." },
+            { "name": "log10",   "sig": "log10(x: f64) -> f64",   "doc": "Base-10 logarithm." },
+            { "name": "sinh",    "sig": "sinh(x: f64) -> f64",    "doc": "Hyperbolic sine." },
+            { "name": "cosh",    "sig": "cosh(x: f64) -> f64",    "doc": "Hyperbolic cosine." },
+            { "name": "tanh",    "sig": "tanh(x: f64) -> f64",    "doc": "Hyperbolic tangent." },
+            { "name": "hypot",   "sig": "hypot(x: f64, y: f64) -> f64", "doc": "Hypotenuse √(x²+y²), avoids overflow." },
+            { "name": "lerp",    "sig": "lerp(a: f64, b: f64, t: f64) -> f64", "doc": "Linear interpolation: a + (b-a)*t." },
+            { "name": "clamp",   "sig": "clamp(x: f64, min: f64, max: f64) -> f64", "doc": "Clamp x to [min, max]." },
+            { "name": "degrees", "sig": "degrees(x: f64) -> f64", "doc": "Radians to degrees." },
+            { "name": "radians", "sig": "radians(x: f64) -> f64", "doc": "Degrees to radians." },
+            { "name": "fract",   "sig": "fract(x: f64) -> f64",   "doc": "Fractional part of x." },
+            { "name": "signum",  "sig": "signum(x: f64) -> f64",  "doc": "Sign: -1.0, 0.0, or 1.0." },
+            { "name": "rem_euclid", "sig": "rem_euclid(x: f64, y: f64) -> f64", "doc": "Always-positive remainder (modulo)." },
+            { "name": "copysign","sig": "copysign(x: f64, y: f64) -> f64", "doc": "x with the sign of y." },
             { "name": "to_float","sig": "to_float(x: i64) -> f64", "doc": "Integer to float." },
             { "name": "to_int",  "sig": "to_int(x: f64) -> i64",  "doc": "Float to integer (truncates toward zero)." },
         ],
