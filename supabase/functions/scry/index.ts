@@ -381,6 +381,8 @@ SVG Pattern
   }
   svg(\`<svg xmlns="http://www.w3.org/2000/svg" width="\${WIDTH}" height="\${HEIGHT}" viewBox="0 0 \${WIDTH} \${HEIGHT}">\${body}</svg>\`);
 
+  XML comments (<!-- -->) are unsupported in SVG output.
+
 Color Functions (palette crate)
   hsl(h, s, l)              → "#rrggbb"   h=0-360, s/l=0-100
   hsla(h, s, l, a)          → "#rrggbbaa"  a=0.0-1.0
