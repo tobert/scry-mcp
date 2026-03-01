@@ -10,7 +10,7 @@ Computational scrying glass — an MCP server that lets Claude generate SVG visu
 
 ## Tools
 
-**`whiteboard`** — Execute Python code to generate SVG visuals on a named board. Call `svg('<svg>...</svg>')` to set content. Variables persist between calls.
+**`whiteboard`** — Execute Python code to generate SVG visuals on a named board. Call `svg('<svg>...</svg>')` to set content. Variables persist between calls. Optional `alt` parameter provides an accessible text description of the visual — it's embedded as `<desc>` in SVGs and as `iTXt` metadata in PNGs, and appears last in tool output for easy copy/paste.
 
 **`whiteboard_list`** — List all active boards with thumbnails, URLs, and metadata.
 

@@ -1,0 +1,5 @@
+[functions.scry]
+static_files = ["./functions/scry/rhai-sandbox/pkg/*"]
+
+[functions.scry-view]
+static_files = ["./functions/scry-view/resvg_bg.wasm", "./functions/scry-view/fonts/*"]
