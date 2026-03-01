@@ -1,7 +1,58 @@
+use palette::{
+    Clamp, FromColor, Hsl, IntoColor, Lighten, Mix, Oklch, ShiftHue, Srgb, Srgba, WithAlpha,
+};
 use rhai::{Engine, Scope, AST, Dynamic, ImmutableString};
 use serde::{Deserialize, Serialize};
 use std::cell::RefCell;
 use wasm_bindgen::prelude::*;
+
+// ---------------------------------------------------------------------------
+// Color helpers — palette types → CSS/hex strings for SVG attributes
+// ---------------------------------------------------------------------------
+
+/// Format an Srgb as "#RRGGBB".
+fn srgb_to_hex(c: Srgb<f32>) -> String {
+    let r = (c.red.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let g = (c.green.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let b = (c.blue.clamp(0.0, 1.0) * 255.0).round() as u8;
+    format!("#{r:02x}{g:02x}{b:02x}")
+}
+
+/// Format an Srgba as "#RRGGBBAA".
+fn srgba_to_hex(c: Srgba<f32>) -> String {
+    let r = (c.red.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let g = (c.green.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let b = (c.blue.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let a = (c.alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+    format!("#{r:02x}{g:02x}{b:02x}{a:02x}")
+}
+
+/// Parse a hex color string ("#RGB", "#RRGGBB", or "#RRGGBBAA") into Srgba.
+fn parse_hex(hex: &str) -> Option<Srgba<f32>> {
+    let hex = hex.trim_start_matches('#');
+    match hex.len() {
+        3 => {
+            let r = u8::from_str_radix(&hex[0..1].repeat(2), 16).ok()?;
+            let g = u8::from_str_radix(&hex[1..2].repeat(2), 16).ok()?;
+            let b = u8::from_str_radix(&hex[2..3].repeat(2), 16).ok()?;
+            Some(Srgba::new(r, g, b, 255u8).into_format())
+        }
+        6 => {
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            Some(Srgba::new(r, g, b, 255u8).into_format())
+        }
+        8 => {
+            let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+            let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+            let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+            let a = u8::from_str_radix(&hex[6..8], 16).ok()?;
+            Some(Srgba::new(r, g, b, a).into_format())
+        }
+        _ => None,
+    }
+}
 
 /// Result of executing a Rhai script, serialized as JSON for the TypeScript host.
 #[derive(Serialize, Deserialize)]
@@ -113,6 +164,149 @@ fn build_engine() -> Engine {
     // String/number conversion helpers
     engine.register_fn("to_float", |x: i64| x as f64);
     engine.register_fn("to_int", |x: f64| x as i64);
+
+    // -----------------------------------------------------------------------
+    // Color functions (palette crate) — return CSS/hex strings for SVG
+    // -----------------------------------------------------------------------
+
+    // CSS color string formatters
+    engine.register_fn("hsl", |h: f64, s: f64, l: f64| -> String {
+        let c: Srgb<f32> = Hsl::new(h as f32, s as f32 / 100.0, l as f32 / 100.0).into_color();
+        srgb_to_hex(c)
+    });
+
+    engine.register_fn("hsla", |h: f64, s: f64, l: f64, a: f64| -> String {
+        let c: Srgb<f32> = Hsl::new(h as f32, s as f32 / 100.0, l as f32 / 100.0).into_color();
+        srgba_to_hex(c.with_alpha(a as f32))
+    });
+
+    engine.register_fn("rgb", |r: f64, g: f64, b: f64| -> String {
+        srgb_to_hex(Srgb::new(r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0))
+    });
+
+    engine.register_fn("rgba", |r: f64, g: f64, b: f64, a: f64| -> String {
+        srgba_to_hex(Srgba::new(
+            r as f32 / 255.0,
+            g as f32 / 255.0,
+            b as f32 / 255.0,
+            a as f32,
+        ))
+    });
+
+    // Oklch — perceptually uniform color from lightness, chroma, hue → hex
+    engine.register_fn("oklch", |l: f64, c: f64, h: f64| -> String {
+        let oklch = Oklch::new(l as f32, c as f32, h as f32);
+        let rgb: Srgb<f32> = oklch.into_color();
+        srgb_to_hex(rgb.clamp())
+    });
+
+    engine.register_fn("oklcha", |l: f64, c: f64, h: f64, a: f64| -> String {
+        let oklch = Oklch::new(l as f32, c as f32, h as f32);
+        let rgb: Srgb<f32> = oklch.into_color();
+        srgba_to_hex(rgb.clamp().with_alpha(a as f32))
+    });
+
+    // Perceptual color mixing in Oklab space
+    engine.register_fn("color_mix", |hex1: ImmutableString, hex2: ImmutableString, t: f64| -> String {
+        let c1 = match parse_hex(&hex1) {
+            Some(c) => c,
+            None => return format!("!invalid color: {hex1}"),
+        };
+        let c2 = match parse_hex(&hex2) {
+            Some(c) => c,
+            None => return format!("!invalid color: {hex2}"),
+        };
+        // Mix in Oklab space for perceptually uniform interpolation
+        let ok1: Oklch<f32> = Oklch::from_color(Srgb::from_color(c1));
+        let ok2: Oklch<f32> = Oklch::from_color(Srgb::from_color(c2));
+        let mixed = ok1.mix(ok2, t as f32);
+        let rgb: Srgb<f32> = mixed.into_color();
+        // Preserve alpha interpolation
+        let a = c1.alpha + (c2.alpha - c1.alpha) * t as f32;
+        if a < 1.0 {
+            srgba_to_hex(rgb.clamp().with_alpha(a))
+        } else {
+            srgb_to_hex(rgb.clamp())
+        }
+    });
+
+    // Lighten/darken in Oklch space
+    engine.register_fn("color_lighten", |hex: ImmutableString, amount: f64| -> String {
+        let c = match parse_hex(&hex) {
+            Some(c) => c,
+            None => return format!("!invalid color: {hex}"),
+        };
+        let oklch: Oklch<f32> = Oklch::from_color(Srgb::from_color(c));
+        let lightened = oklch.lighten(amount as f32);
+        let rgb: Srgb<f32> = lightened.into_color();
+        if c.alpha < 1.0 {
+            srgba_to_hex(rgb.clamp().with_alpha(c.alpha))
+        } else {
+            srgb_to_hex(rgb.clamp())
+        }
+    });
+
+    engine.register_fn("color_darken", |hex: ImmutableString, amount: f64| -> String {
+        let c = match parse_hex(&hex) {
+            Some(c) => c,
+            None => return format!("!invalid color: {hex}"),
+        };
+        let oklch: Oklch<f32> = Oklch::from_color(Srgb::from_color(c));
+        let darkened = oklch.lighten(-(amount as f32));
+        let rgb: Srgb<f32> = darkened.into_color();
+        if c.alpha < 1.0 {
+            srgba_to_hex(rgb.clamp().with_alpha(c.alpha))
+        } else {
+            srgb_to_hex(rgb.clamp())
+        }
+    });
+
+    // Saturate/desaturate — scale chroma in Oklch space
+    engine.register_fn("color_saturate", |hex: ImmutableString, amount: f64| -> String {
+        let c = match parse_hex(&hex) {
+            Some(c) => c,
+            None => return format!("!invalid color: {hex}"),
+        };
+        let mut oklch: Oklch<f32> = Oklch::from_color(Srgb::from_color(c));
+        oklch.chroma *= 1.0 + amount as f32;
+        let rgb: Srgb<f32> = oklch.into_color();
+        if c.alpha < 1.0 {
+            srgba_to_hex(rgb.clamp().with_alpha(c.alpha))
+        } else {
+            srgb_to_hex(rgb.clamp())
+        }
+    });
+
+    engine.register_fn("color_desaturate", |hex: ImmutableString, amount: f64| -> String {
+        let c = match parse_hex(&hex) {
+            Some(c) => c,
+            None => return format!("!invalid color: {hex}"),
+        };
+        let mut oklch: Oklch<f32> = Oklch::from_color(Srgb::from_color(c));
+        oklch.chroma *= (1.0 - amount as f32).max(0.0);
+        let rgb: Srgb<f32> = oklch.into_color();
+        if c.alpha < 1.0 {
+            srgba_to_hex(rgb.clamp().with_alpha(c.alpha))
+        } else {
+            srgb_to_hex(rgb.clamp())
+        }
+    });
+
+    // Hue shift in Oklch space
+    engine.register_fn("hue_shift", |hex: ImmutableString, degrees: f64| -> String {
+        let c = match parse_hex(&hex) {
+            Some(c) => c,
+            None => return format!("!invalid color: {hex}"),
+        };
+        let oklch: Oklch<f32> = Oklch::from_color(Srgb::from_color(c));
+        let shifted = oklch.shift_hue(degrees as f32);
+        let rgb: Srgb<f32> = shifted.into_color();
+        if c.alpha < 1.0 {
+            srgba_to_hex(rgb.clamp().with_alpha(c.alpha))
+        } else {
+            srgb_to_hex(rgb.clamp())
+        }
+    });
 
     engine
 }
@@ -258,6 +452,18 @@ pub fn metadata() -> String {
             { "name": "copysign","sig": "copysign(x: f64, y: f64) -> f64", "doc": "x with the sign of y." },
             { "name": "to_float","sig": "to_float(x: i64) -> f64", "doc": "Integer to float." },
             { "name": "to_int",  "sig": "to_int(x: f64) -> i64",  "doc": "Float to integer (truncates toward zero)." },
+            { "name": "hsl",    "sig": "hsl(h: f64, s: f64, l: f64) -> string", "doc": "HSL to hex. h=0-360, s=0-100, l=0-100. Returns \"#rrggbb\"." },
+            { "name": "hsla",   "sig": "hsla(h: f64, s: f64, l: f64, a: f64) -> string", "doc": "HSL+alpha to hex. a=0.0-1.0. Returns \"#rrggbbaa\"." },
+            { "name": "rgb",    "sig": "rgb(r: f64, g: f64, b: f64) -> string", "doc": "RGB to hex. 0-255 per channel. Returns \"#rrggbb\"." },
+            { "name": "rgba",   "sig": "rgba(r: f64, g: f64, b: f64, a: f64) -> string", "doc": "RGB+alpha to hex. a=0.0-1.0. Returns \"#rrggbbaa\"." },
+            { "name": "oklch",  "sig": "oklch(l: f64, c: f64, h: f64) -> string", "doc": "Oklch to hex. l=0-1 lightness, c=0-0.4 chroma, h=0-360 hue. Perceptually uniform." },
+            { "name": "oklcha", "sig": "oklcha(l: f64, c: f64, h: f64, a: f64) -> string", "doc": "Oklch+alpha to hex. Perceptually uniform color with transparency." },
+            { "name": "color_mix", "sig": "color_mix(hex1: string, hex2: string, t: f64) -> string", "doc": "Mix two hex colors in Oklab space. t=0.0 → hex1, t=1.0 → hex2." },
+            { "name": "color_lighten", "sig": "color_lighten(hex: string, amount: f64) -> string", "doc": "Lighten a hex color in Oklch. amount=0.0-1.0." },
+            { "name": "color_darken",  "sig": "color_darken(hex: string, amount: f64) -> string",  "doc": "Darken a hex color in Oklch. amount=0.0-1.0." },
+            { "name": "color_saturate", "sig": "color_saturate(hex: string, amount: f64) -> string", "doc": "Increase chroma of a hex color in Oklch." },
+            { "name": "color_desaturate", "sig": "color_desaturate(hex: string, amount: f64) -> string", "doc": "Decrease chroma of a hex color in Oklch." },
+            { "name": "hue_shift", "sig": "hue_shift(hex: string, degrees: f64) -> string", "doc": "Shift hue of a hex color by degrees in Oklch space." },
         ],
         "constants": [
             { "name": "WIDTH",  "type": "i64", "doc": "Board width in pixels (read-only, set per execution)." },

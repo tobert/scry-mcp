@@ -68,6 +68,7 @@ function createMcpServer(): McpServer {
         "`if x > 0 { ... } else { ... }` for branches. String interpolation: `${expr}` inside backtick strings. " +
         "No `const`, no `++/--`, no ternary. Use `+` to concatenate strings.\n\n" +
         "Read the scry://rhai-primer and scry://builtins resources for full syntax and available functions.\n\n" +
+        "For complex/dense visuals, use `stroke-opacity`/`fill-opacity` (not `opacity`) and batch lines into `<path>` or `<polyline>` — this avoids per-element compositing layers in the PNG renderer.\n\n" +
         "Always provide `alt` text describing the visual for accessibility.",
       inputSchema: {
         name: z.string().describe("Name of the board (creates new if doesn't exist)"),
@@ -379,6 +380,41 @@ SVG Pattern
     body += \`<circle cx="\${cx}" cy="300" r="40" fill="teal"/>\`;
   }
   svg(\`<svg xmlns="http://www.w3.org/2000/svg" width="\${WIDTH}" height="\${HEIGHT}" viewBox="0 0 \${WIDTH} \${HEIGHT}">\${body}</svg>\`);
+
+Color Functions (palette crate)
+  hsl(h, s, l)              → "#rrggbb"   h=0-360, s/l=0-100
+  hsla(h, s, l, a)          → "#rrggbbaa"  a=0.0-1.0
+  rgb(r, g, b)              → "#rrggbb"   0-255 per channel
+  rgba(r, g, b, a)          → "#rrggbbaa"
+  oklch(l, c, h)            → "#rrggbb"   perceptually uniform (l=0-1, c=0-0.4, h=0-360)
+  oklcha(l, c, h, a)        → "#rrggbbaa"
+  color_mix(hex1, hex2, t)  → "#rrggbb"   mix in Oklab space (t=0→hex1, t=1→hex2)
+  color_lighten(hex, amt)   → "#rrggbb"   lighten in Oklch
+  color_darken(hex, amt)    → "#rrggbb"   darken in Oklch
+  color_saturate(hex, amt)  → "#rrggbb"   boost chroma in Oklch
+  color_desaturate(hex, amt)→ "#rrggbb"   reduce chroma in Oklch
+  hue_shift(hex, degrees)   → "#rrggbb"   rotate hue in Oklch
+
+  All color functions return hex strings for direct use in SVG attributes.
+  hsla/rgba/oklcha return 8-digit hex with alpha baked in — use these
+  instead of the opacity attribute for PNG-friendly rendering.
+
+  Oklch tips: cycle hue at fixed l/c for perceptually even palettes.
+  color_mix interpolates through Oklab — no muddy midpoints like HSL lerp.
+
+PNG-Friendly SVG Patterns
+  The PNG renderer (resvg) allocates a compositing buffer for EVERY element
+  that uses the \`opacity\` attribute. Dense scenes (hundreds of translucent
+  lines) can exhaust memory. Follow these patterns instead:
+
+  AVOID: <line stroke="red" opacity="0.5"/>          → compositing layer per element
+  GOOD:  <line stroke="red" stroke-opacity="0.5"/>   → alpha on paint, no buffer
+  BEST:  <line stroke="\${hsla(0, 80, 60, 0.5)}"/>    → alpha baked into hex color
+
+  Batch geometry to reduce element count:
+  AVOID: 500 separate <line x1=... y1=... x2=... y2=.../> elements
+  GOOD:  <polyline points="x1,y1 x2,y2 ..."/>       → one element for connected points
+  GOOD:  <path d="M x1 y1 L x2 y2 M x3 y3 L x4 y4"/>  → batched disconnected segments
 
 Sandbox Limits
   Max operations: ${lim.max_operations}
